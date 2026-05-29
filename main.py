@@ -59,6 +59,9 @@ class TTSSanitizerPlugin(Star):
         self._compile_patterns()
         self._wrapped_providers: list = []
         self._http_session: Optional[aiohttp.ClientSession] = None
+        # 运行时覆盖（/tts_bi_lang 命令用），优先级高于面板配置
+        self._override_language: str = ""       # 非空时覆盖 tts_language
+        self._override_bilingual: Optional[bool] = None  # 非 None 时覆盖 bilingual_tts
 
     def _get_default_config(self) -> Dict[str, Any]:
         return {
@@ -76,6 +79,16 @@ class TTSSanitizerPlugin(Star):
         """检查是否配置了独立翻译 API"""
         return bool(self.config.get("translate_api_key", ""))
 
+    def _get_tts_language(self) -> str:
+        """获取当前 TTS 语言（运行时覆盖 > 面板配置）"""
+        return self._override_language or self.config.get("tts_language", "English")
+
+    def _is_bilingual_enabled(self) -> bool:
+        """获取当前双语开关状态（运行时覆盖 > 面板配置）"""
+        if self._override_bilingual is not None:
+            return self._override_bilingual
+        return self.config.get("bilingual_tts", False)
+
     def _resolve_language(self, lang_input: str) -> str:
         """解析语言名称，支持中文/缩写别名"""
         stripped = lang_input.strip()
@@ -88,7 +101,7 @@ class TTSSanitizerPlugin(Star):
         return self._http_session
 
     async def initialize(self):
-        bilingual = self.config.get('bilingual_tts', False)
+        bilingual = self._is_bilingual_enabled()
         has_api = self._has_translate_api()
         speak_tool = self.config.get('enable_speak_tool', False)
         logger.info(
@@ -109,9 +122,13 @@ class TTSSanitizerPlugin(Star):
     async def speak_tool(self, event: AstrMessageEvent, text: str, language: str = "") -> MessageEventResult:
         '''发送一条语音消息。当用户要求你"说一句话"、"用声音/语音回答"、"念出来"、"读给我听"等需要语音输出的场景时调用此工具。
 
+        【重要】text 必须填中文原文！禁止自己翻译！翻译由系统自动完成。
+        正确示例：用户说"用日语说你好" → text="你好", language="Japanese"
+        错误示例：text="こんにちは"（不要自己翻译）
+
         Args:
-            text(string): 要朗读的文本内容（中文）
-            language(string): 语音朗读的语言，例如 English、Japanese、Korean。留空则使用默认配置的语言。
+            text(string): 要朗读的中文文本。无论 language 是什么语言，这里都只填中文，系统会自动翻译成目标语言的语音。
+            language(string): 语音朗读的目标语言（如 English、Japanese、Korean），留空则使用默认语言。不要自行翻译 text，翻译是自动的。
         '''
         if not self.config.get("enable_speak_tool", False):
             logger.info("🎤 speak tool: 未启用，回退纯文字")
@@ -136,14 +153,14 @@ class TTSSanitizerPlugin(Star):
 
             # 决定朗读语言：tool 参数 > 配置默认
             target_language = self._resolve_language(language) if language.strip() else ""
-            bilingual_on = self.config.get('bilingual_tts', False) and self._has_translate_api()
+            bilingual_on = self._is_bilingual_enabled() and self._has_translate_api()
             need_translate = bool(target_language) or bilingual_on
 
             tts_text = text  # 默认用原文
 
             if need_translate and self._has_translate_api():
                 # 确定最终目标语言
-                final_lang = target_language if target_language else self.config.get("tts_language", "English")
+                final_lang = target_language if target_language else self._get_tts_language()
                 try:
                     translated = await self._translate_text(text, language=final_lang)
                     if translated:
@@ -255,7 +272,7 @@ class TTSSanitizerPlugin(Star):
                 return await original_get_audio("")
 
             # === 双语模式：调翻译 API ===
-            if plugin.config.get('bilingual_tts', False) and plugin._has_translate_api():
+            if plugin._is_bilingual_enabled() and plugin._has_translate_api():
                 try:
                     translated = await plugin._translate_text(text)
                     if translated:
@@ -302,7 +319,7 @@ class TTSSanitizerPlugin(Star):
         ) -> None:
             filtered_queue: asyncio.Queue[str | None] = asyncio.Queue()
             debug_mode = plugin.config.get('debug_mode', False)
-            bilingual = plugin.config.get('bilingual_tts', False) and plugin._has_translate_api()
+            bilingual = plugin._is_bilingual_enabled() and plugin._has_translate_api()
 
             async def filter_worker():
                 max_len = plugin.config.get('max_length', 200)
@@ -383,7 +400,7 @@ class TTSSanitizerPlugin(Star):
         api_key = self.config.get("translate_api_key", "")
         api_base = self.config.get("translate_api_base", "https://api.openai.com/v1").rstrip("/")
         model = self.config.get("translate_model", "gpt-4o-mini")
-        target_lang = language if language else self.config.get("tts_language", "English")
+        target_lang = language if language else self._get_tts_language()
 
         if not api_key:
             return None
@@ -526,8 +543,8 @@ class TTSSanitizerPlugin(Star):
         else:
             user_input = full_msg
 
-        current_lang = self.config.get("tts_language", "English")
-        bilingual_on = self.config.get("bilingual_tts", False)
+        current_lang = self._get_tts_language()
+        bilingual_on = self._is_bilingual_enabled()
 
         # 无参数：显示当前状态
         if not user_input:
@@ -544,7 +561,7 @@ class TTSSanitizerPlugin(Star):
 
         # off/关闭：关闭双语模式
         if user_input.lower() in ("off", "关闭", "close", "disable"):
-            self.config["bilingual_tts"] = False
+            self._override_bilingual = False
             logger.info("🌐 双语TTS已关闭（通过命令）")
             yield event.plain_result("🌐 双语TTS已关闭，语音将朗读原文")
             return
@@ -555,8 +572,8 @@ class TTSSanitizerPlugin(Star):
             return
 
         new_lang = self._resolve_language(user_input)
-        self.config["tts_language"] = new_lang
-        self.config["bilingual_tts"] = True
+        self._override_language = new_lang
+        self._override_bilingual = True
         logger.info(f"🌐 TTS语言已切换: {current_lang} → {new_lang}")
         yield event.plain_result(f"🌐 TTS语言已切换: {new_lang}\n语音将朗读 {new_lang}，文字保持中文")
 
@@ -596,7 +613,7 @@ class TTSSanitizerPlugin(Star):
         result = f"""📊 TTS过滤插件 v1.5.0
 
 • 启用: {"✅" if self.config.get("enabled", True) else "❌"}
-• 双语TTS: {"✅ (" + self.config.get("tts_language", "English") + ")" if self.config.get("bilingual_tts", False) else "❌"}
+• 双语TTS: {"✅ (" + self._get_tts_language() + ")" if self._is_bilingual_enabled() else "❌"}
 • 翻译API: {"✅ " + model if has_api else "❌ 未配置"}
 • 语音Tool: {"✅" if self.config.get("enable_speak_tool", False) else "❌"}
 • 停顿标记: {"✅" if self.config.get("tts_pause_markers", False) else "❌"}
@@ -607,11 +624,14 @@ class TTSSanitizerPlugin(Star):
     @filter.command("tts_bi_reload")
     async def reload_config(self, event: AstrMessageEvent):
         try:
+            # 清除运行时覆盖，回到面板配置
+            self._override_language = ""
+            self._override_bilingual = None
             self._compile_patterns()
             self._wrap_all_providers()
 
-            lang = self.config.get("tts_language", "English")
-            bilingual = self.config.get("bilingual_tts", False)
+            lang = self._get_tts_language()
+            bilingual = self._is_bilingual_enabled()
             has_api = self._has_translate_api()
             model = self.config.get("translate_model", "gpt-4o-mini") if has_api else "N/A"
             speak = self.config.get("enable_speak_tool", False)
