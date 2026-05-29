@@ -120,15 +120,11 @@ class TTSSanitizerPlugin(Star):
 
     @filter.llm_tool(name="speak")
     async def speak_tool(self, event: AstrMessageEvent, text: str, language: str = "") -> MessageEventResult:
-        '''发送一条语音消息。当用户要求你"说一句话"、"用声音/语音回答"、"念出来"、"读给我听"等需要语音输出的场景时调用此工具。
-
-        【重要】text 必须填中文原文！禁止自己翻译！翻译由系统自动完成。
-        正确示例：用户说"用日语说你好" → text="你好", language="Japanese"
-        错误示例：text="こんにちは"（不要自己翻译）
+        '''发送语音消息。用户要求"说一句话"、"语音回答"、"念出来"时调用。text只填中文，系统自动翻译，禁止自行翻译。
 
         Args:
-            text(string): 要朗读的中文文本。无论 language 是什么语言，这里都只填中文，系统会自动翻译成目标语言的语音。
-            language(string): 语音朗读的目标语言（如 English、Japanese、Korean），留空则使用默认语言。不要自行翻译 text，翻译是自动的。
+            text(string): 中文原文，禁止翻译成其他语言
+            language(string): 语音目标语言如English/Japanese/Korean，留空用默认
         '''
         if not self.config.get("enable_speak_tool", False):
             logger.info("🎤 speak tool: 未启用，回退纯文字")
