@@ -10,6 +10,7 @@ from typing import Optional, Dict, Any
 
 # 双语 TTS 标签正则：匹配 «TTS»...«/TTS»（支持换行，兼容旧版 Prompt 注入残留）
 EN_TAG_PATTERN = re.compile(r'\s*«TTS»\s*(.*?)\s*«/TTS»', re.DOTALL)
+CJK_PATTERN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 
 # 内置默认值
 DEFAULT_REMOVE_PATTERNS = [
@@ -94,6 +95,21 @@ class TTSSanitizerPlugin(Star):
         stripped = lang_input.strip()
         return LANG_ALIASES.get(stripped.lower(), stripped)
 
+    def _contains_cjk(self, text: str) -> bool:
+        return bool(text and CJK_PATTERN.search(text))
+
+    def _is_chinese_language(self, language: str) -> bool:
+        normalized = (language or "").strip().lower()
+        return normalized in {"chinese", "zh", "zh-cn", "zh-tw", "mandarin", "中文", "中"}
+
+    def _should_translate_tool_text(self, text: str, target_language: str) -> bool:
+        if not text or not target_language:
+            return False
+        has_cjk = self._contains_cjk(text)
+        if self._is_chinese_language(target_language):
+            return not has_cjk
+        return has_cjk
+
     async def _get_session(self) -> aiohttp.ClientSession:
         """获取可复用的 aiohttp 会话"""
         if self._http_session is None or self._http_session.closed:
@@ -119,16 +135,26 @@ class TTSSanitizerPlugin(Star):
     # =========================================================================
 
     @filter.llm_tool(name="speak")
-    async def speak_tool(self, event: AstrMessageEvent, text: str, language: str = "") -> MessageEventResult:
-        '''发送语音消息。用户要求"说一句话"、"语音回答"、"念出来"时调用。text只填中文，系统自动翻译，禁止自行翻译。
+    async def speak_tool(
+        self,
+        event: AstrMessageEvent,
+        text: str,
+        language: str = "",
+        caption: str = "",
+    ) -> MessageEventResult:
+        '''发送语音消息。用户要求"说一句话"、"语音回答"、"念出来"时调用。默认只发送语音，不发送文字；需要附带可见翻译时再填写 caption。text必须填写原文，不要自行翻译；插件会按配置自动处理朗读语言。
 
         Args:
-            text(string): 中文原文，禁止翻译成其他语言
+            text(string): 用来生成语音的原文，禁止翻译成其他语言，默认不会作为文字发送
             language(string): 语音目标语言如English/Japanese/Korean，留空用默认
+            caption(string): 可选的可见翻译文本。只有用户明确需要文字或翻译对照时才填写；禁止填写原文，留空则只发语音
         '''
+        visible_text = caption.strip()
+        failure_text = "🎤 语音生成失败，暂时无法发送语音"
+
         if not self.config.get("enable_speak_tool", False):
             logger.info("🎤 speak tool: 未启用，回退纯文字")
-            yield event.plain_result(text)
+            yield event.plain_result(visible_text or failure_text)
             return
 
         debug_mode = self.config.get('debug_mode', False)
@@ -137,7 +163,7 @@ class TTSSanitizerPlugin(Star):
             providers = self.context.get_all_tts_providers()
             if not providers:
                 logger.warning("🎤 speak tool: 没有可用的 TTS Provider")
-                yield event.plain_result(text)
+                yield event.plain_result(visible_text or failure_text)
                 return
 
             provider = providers[0]
@@ -153,23 +179,31 @@ class TTSSanitizerPlugin(Star):
             need_translate = bool(target_language) or bilingual_on
 
             tts_text = text  # 默认用原文
+            final_lang = target_language if target_language else self._get_tts_language()
+            pretranslated_by_llm = False
 
             if need_translate and self._has_translate_api():
                 # 确定最终目标语言
-                final_lang = target_language if target_language else self._get_tts_language()
-                try:
-                    translated = await self._translate_text(text, language=final_lang)
-                    if translated:
-                        tts_text = translated
+                if self._should_translate_tool_text(text, final_lang):
+                    try:
+                        translated = await self._translate_text(text, language=final_lang)
+                        if translated:
+                            tts_text = translated
+                            if debug_mode:
+                                logger.info(f"🎤🌐 speak tool 翻译: '{text[:30]}...' → [{final_lang}] '{translated[:30]}...'")
+                    except Exception as e:
+                        logger.warning(f"🎤🌐 speak tool 翻译失败，降级原文: {e}")
+                else:
+                    # 有些模型会把 tool 参数提前翻译成目标语言；这里避免再交给翻译 API 处理。
+                    pretranslated_by_llm = bool(final_lang and not self._is_chinese_language(final_lang) and not self._contains_cjk(text))
+                    if pretranslated_by_llm:
                         if debug_mode:
-                            logger.info(f"🎤🌐 speak tool 翻译: '{text[:30]}...' → [{final_lang}] '{translated[:30]}...'")
-                except Exception as e:
-                    logger.warning(f"🎤🌐 speak tool 翻译失败，降级原文: {e}")
+                            logger.info(f"🎤 speak tool: 检测到疑似已翻译参数，跳过翻译 API: [{final_lang}] '{text[:50]}...'")
 
             # 过滤
             tts_text = self._apply_filters(tts_text)
             if not tts_text.strip():
-                yield event.plain_result(text)
+                yield event.plain_result(visible_text or failure_text)
                 return
 
             if debug_mode:
@@ -185,16 +219,16 @@ class TTSSanitizerPlugin(Star):
                 logger.info(f"🎤 speak tool: TTS 返回 audio_path={audio_path}")
 
             if audio_path:
-                # 分开发送：先文字再语音，避免 QQ 等平台 chain 只显示语音的问题
-                yield event.plain_result(text)
+                if visible_text:
+                    yield event.plain_result(visible_text)
                 yield event.chain_result([Comp.Record(file=audio_path, url=audio_path)])
             else:
                 logger.warning("🎤 speak tool: TTS 返回空路径，仅发送文字")
-                yield event.plain_result(text)
+                yield event.plain_result(visible_text or failure_text)
 
         except Exception as e:
             logger.warning(f"🎤 speak tool 失败: {e}", exc_info=True)
-            yield event.plain_result(text)
+            yield event.plain_result(visible_text or failure_text)
 
     # =========================================================================
     # 核心：TTS Provider 包装

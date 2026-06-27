@@ -33,7 +33,7 @@
     "hint": "例如：gpt-4o-mini, google/gemini-2.0-flash-lite, deepseek/deepseek-chat 等"
   },
   "enable_speak_tool": {
-    "description": "启用语音Tool：让模型可以主动发送语音消息。用户说“说一句话”、“念给我听”等时模型会自动调用。",
+    "description": "启用语音Tool：让模型可以主动发送语音消息。默认只发送语音；模型可在需要时通过 caption 附带翻译文本，禁止附带原文。",
     "type": "bool",
     "default": false
   },
