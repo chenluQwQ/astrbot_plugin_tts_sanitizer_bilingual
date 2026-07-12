@@ -9,7 +9,7 @@
 | 功能 | 说明 | 需要配置 |
 |------|------|----------|
 | 文字过滤 | 过滤颜文字、特殊符号、网络用语等 | 默认开启 |
-| 双语TTS | 文字显示中文，语音朗读其他语言 | 翻译API + `bilingual_tts` |
+| 双语TTS | 文字显示中文，语音朗读其他语言 | 翻译 Provider + `bilingual_tts` |
 | 语音Tool | 模型主动判断何时发送语音 | `enable_speak_tool` |
 | 停顿标记 | MiniMax TTS 标点停顿 | `tts_pause_markers` |
 
@@ -21,12 +21,12 @@
 
 ### 工作原理
 
-通过独立翻译API实现，与主模型完全解耦：
+通过 AstrBot 中已配置的模型 Provider 实现；可单独选择一个便宜的小模型，不影响聊天模型：
 
 ```
 主模型输出：今天心情很好呢~          ← 只输出中文，不需要额外指令
 用户看到：  今天心情很好呢~          ← 纯中文文字
-TTS调用时： 调翻译API → 英文        ← 仅在生成语音时才翻译
+TTS调用时： 调翻译Provider → 英文   ← 仅在生成语音时才翻译
 语音朗读：  I'm in a great mood~    ← 翻译后的语音
 ```
 
@@ -34,7 +34,8 @@ TTS调用时： 调翻译API → 英文        ← 仅在生成语音时才翻�
 - 主模型不需要管翻译，不会出现标签暴露问题
 - 翻译仅在TTS时触发，不浪费token
 - 完美兼容AstrBot的分段发送功能（每段独立翻译）
-- 翻译用便宜小模型（如gpt-4o-mini），成本极低
+- 可直接复用 AstrBot 已配置的模型，无需重复填写 API 地址和密钥
+- 翻译可选便宜小模型，降低成本
 
 ### 配置
 
@@ -42,16 +43,11 @@ TTS调用时： 调翻译API → 英文        ← 仅在生成语音时才翻�
 |--------|------|--------|
 | `bilingual_tts` | 双语TTS总开关 | `false` |
 | `tts_language` | TTS朗读语言 | `English` |
-| `translate_api_base` | 翻译API地址（OpenAI兼容） | 空 |
-| `translate_api_key` | 翻译API密钥 | 空 |
-| `translate_model` | 翻译模型 | `gpt-4o-mini` |
+| `translate_provider_id` | AstrBot 翻译模型 Provider | 空 |
 
 `tts_language` 可以填任何语言名，例如：`English`、`Japanese`、`Korean`、`French`、`Spanish`、`German` 等。
 
-**翻译API地址示例**：
-- OpenAI官方：`https://api.openai.com/v1`
-- OpenRouter：`https://openrouter.ai/api/v1`
-- 其他兼容OpenAI格式的服务均可
+`translate_provider_id` 会在面板中显示 AstrBot 自带的“选择提供商”控件。建议选择便宜、响应快的小模型。
 
 ## 🎤 语音Tool
 
@@ -96,7 +92,7 @@ https://github.com/chenluQwQ/astrbot_plugin_tts_sanitizer_bilingual
 
 - 如果已安装原版 `tts_sanitizer`，建议先卸载再安装本插件，避免TTS Provider被重复包装
 - 首次安装后需要重启AstrBot
-- 需要 `aiohttp` 依赖（双语翻译功能），插件会自动安装
+- 双语翻译需要 AstrBot `4.5.7` 或更高版本
 
 ## 🎮 命令
 
@@ -116,7 +112,7 @@ https://github.com/chenluQwQ/astrbot_plugin_tts_sanitizer_bilingual
 
 1. 开启 `bilingual_tts`
 2. 设置 `tts_language`（如 `English`）
-3. 填写 `translate_api_base`、`translate_api_key`、`translate_model`
+3. 在 `TTS翻译 Provider（小模型）` 中选择 AstrBot 已配置的模型
 4. 重启AstrBot
 
 ### 语音Tool

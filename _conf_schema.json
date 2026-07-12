@@ -5,7 +5,7 @@
     "default": true
   },
   "bilingual_tts": {
-    "description": "双语TTS模式：开启后，TTS朗读翻译语言，显示文本保留中文。需要配置翻译API。",
+    "description": "双语TTS模式：开启后，TTS朗读翻译语言，显示文本保留中文。需要选择翻译模型提供商。",
     "type": "bool",
     "default": false
   },
@@ -15,22 +15,12 @@
     "default": "English",
     "hint": "例如：English, Japanese, Korean, French, Spanish, German 等"
   },
-  "translate_api_base": {
-    "description": "翻译API地址（OpenAI兼容格式）",
+  "translate_provider_id": {
+    "description": "TTS翻译 Provider（小模型）",
     "type": "string",
     "default": "",
-    "hint": "例如：https://openrouter.ai/api/v1 或 https://api.openai.com/v1"
-  },
-  "translate_api_key": {
-    "description": "翻译API密钥",
-    "type": "string",
-    "default": ""
-  },
-  "translate_model": {
-    "description": "翻译使用的模型（建议用便宜的小模型）",
-    "type": "string",
-    "default": "gpt-4o-mini",
-    "hint": "例如：gpt-4o-mini, google/gemini-2.0-flash-lite, deepseek/deepseek-chat 等"
+    "hint": "用于把 TTS 文本翻译为目标语言；建议选择便宜、速度快的小模型。",
+    "_special": "select_provider"
   },
   "enable_speak_tool": {
     "description": "启用语音Tool：让模型可以主动发送语音消息。默认只发送语音；模型可在需要时通过 caption 附带翻译文本，禁止附带原文。",

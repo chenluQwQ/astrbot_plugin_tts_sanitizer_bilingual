@@ -1,7 +1,7 @@
 name: astrbot_plugin_tts_sanitizer_bilingual
 display_name: tts外语朗读
 desc: TTS文本过滤插件 - 支持双语TTS、语音Tool、MiniMax停顿标记，基于柯尔的tts_sanitizer扩展
-version: v1.5.0
+version: v1.6.0
 author: 柠弥
 repo: https://github.com/chenluQwQ/astrbot_plugin_tts_sanitizer_bilingual
-astrbot_version: ">=4.0.0"
+astrbot_version: ">=4.5.7"
